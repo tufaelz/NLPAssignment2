@@ -4,7 +4,7 @@ set -euo pipefail
 # ---------------------------
 # Fixed by assignment
 # ---------------------------
-ROLLOUT_BS=256
+ROLLOUT_BS=64
 
 # ---------------------------
 # Paths / defaults (override via env vars)
@@ -27,22 +27,22 @@ CLIPRANGE="${CLIPRANGE:-0.2}"
 # Coarse sweep settings (< 50 steps as suggested)
 N_GRPO_STEPS="${N_GRPO_STEPS:-40}"
 EVAL_INTERVAL="${EVAL_INTERVAL:-5}"
-EVAL_MAX_EXAMPLES="${EVAL_MAX_EXAMPLES:-512}"
+EVAL_MAX_EXAMPLES="${EVAL_MAX_EXAMPLES:-1500}"
 
 # Sampling (can shrink for sanity)
 SAMPLING_TEMP="${SAMPLING_TEMP:-1.0}"
 SAMPLING_MIN_TOKENS="${SAMPLING_MIN_TOKENS:-4}"
-SAMPLING_MAX_TOKENS="${SAMPLING_MAX_TOKENS:-1024}"
+SAMPLING_MAX_TOKENS="${SAMPLING_MAX_TOKENS:-512}"
 
 # Keep microbatch size roughly constant to keep VRAM constant:
 # micro = train_bs / grad_acc_steps  (we choose micro=2)
-MICRO_BS="${MICRO_BS:-2}"
+MICRO_BS="${MICRO_BS:-1}"
 
 # Use the best choices from prior ablations (override via env vars)
 # (These flags may or may not exist in your script; keep if you added them.)
 USE_STD_NORM="${USE_STD_NORM:-1}"              # 1 => add --use-std-normalization
 LENGTH_NORM="${LENGTH_NORM:-masked_mean}"      # masked_mean or masked_normalize
-CONSTANT_NORMALIZER="${CONSTANT_NORMALIZER:-1024}"
+CONSTANT_NORMALIZER="${CONSTANT_NORMALIZER:-512}"
 
 # Output
 LOG_DIR="${LOG_DIR:-runs/grpo_offpolicy_coarse}"
@@ -52,7 +52,7 @@ mkdir -p "${LOG_DIR}"
 # Sweep grid
 # ---------------------------
 EPOCHS_LIST=(1 2 4)
-TRAIN_BS_LIST=(256 128 64)
+TRAIN_BS_LIST=(64 32 16)
 
 echo "=== Off-policy GRPO COARSE sweep ==="
 echo "rollout_bs=${ROLLOUT_BS} steps=${N_GRPO_STEPS} eval_interval=${EVAL_INTERVAL} eval_max=${EVAL_MAX_EXAMPLES}"
@@ -96,6 +96,7 @@ for E in "${EPOCHS_LIST[@]}"; do
       --n-grpo-steps "${N_GRPO_STEPS}"
 
       --rollout-batch-size "${ROLLOUT_BS}"
+      --group-size 4
       --epochs-per-rollout-batch "${E}"
       --train-batch-size "${TB}"
       --gradient-accumulation-steps "${GA}"

@@ -11,8 +11,8 @@ mkdir -p "${LOG_DIR}"
 # Common defaults
 # ==========================
 N_EI_STEPS=5
-EVAL_MAX_EXAMPLES=500
-SAMPLING_MAX_TOKENS=256
+EVAL_MAX_EXAMPLES=1500
+SAMPLING_MAX_TOKENS=512
 SAMPLING_MIN_TOKENS=4
 SEED=0
 
@@ -25,19 +25,9 @@ VLLM_DEVICE="cuda:1"
 #   "<name>  <args...>"
 # ==========================
 declare -a RUNS=(
-  # ---- Minimal required coverage (2 rollout+epoch combos) ----
-  "G2_E1_D512   --G 2  --epochs 1 --D_i 512"
-  "G2_E1_D1024  --G 2  --epochs 1 --D_i 1024"
-  "G2_E1_D2048  --G 2  --epochs 1 --D_i 2048"
-
-  "G8_E3_D512   --G 8  --epochs 3 --D_i 512"
-  "G8_E3_D1024  --G 8  --epochs 3 --D_i 1024"
-  "G8_E3_D2048  --G 8  --epochs 3 --D_i 2048"
-
-  # ---- Optional extra combos (uncomment if you have time/compute) ----
-  # "G4_E1_D1024  --G 4  --epochs 1 --D_i 1024"
-  # "G8_E1_D1024  --G 8  --epochs 1 --D_i 1024"
-  # "G2_E3_D1024  --G 2  --epochs 3 --D_i 1024"
+  "G2_E2_D64   --G 2 --epochs 2 --D_i 64"
+  "G3_E2_D96   --G 3 --epochs 2 --D_i 96"
+  "G4_E2_D128  --G 4 --epochs 2 --D_i 128"
 )
 
 echo "=== Starting Expert Iteration sweep at $(date) ==="
@@ -76,6 +66,8 @@ for item in "${RUNS[@]}"; do
       --eval_max_examples "${EVAL_MAX_EXAMPLES}" \
       --sampling_max_tokens "${SAMPLING_MAX_TOKENS}" \
       --sampling_min_tokens "${SAMPLING_MIN_TOKENS}" \
+      --micro_batch_size 1 \
+      --grad_acc_steps 1 \
       --seed "${SEED}" \
       --train_device "${TRAIN_DEVICE}" \
       --vllm_device "${VLLM_DEVICE}" \

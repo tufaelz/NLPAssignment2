@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
 import torch
+import wandb
 from torch.utils.data import Dataset, DataLoader
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
@@ -112,7 +113,7 @@ def collate_fn(batch, tokenizer):
     return toks
 
 
-def make_logger(log_path: Path):
+def make_logger(log_path: Path, wandb_run=None):
     log_path.parent.mkdir(parents=True, exist_ok=True)
 
     def log_event(event: Dict[str, Any], also_print: bool = True):
@@ -124,6 +125,20 @@ def make_logger(log_path: Path):
         with open(log_path, "a", encoding="utf-8") as f:
             f.write(json.dumps(payload, ensure_ascii=False) + "\n")
             f.flush()
+        if wandb_run is not None:
+            metrics = {}
+
+            def collect_scalars(values, prefix=""):
+                for key, value in values.items():
+                    metric_key = f"{prefix}/{key}" if prefix else key
+                    if isinstance(value, dict):
+                        collect_scalars(value, metric_key)
+                    elif isinstance(value, (int, float)) and not isinstance(value, bool):
+                        metrics[metric_key] = value
+
+            collect_scalars(event)
+            if metrics:
+                wandb_run.log(metrics)
         if also_print:
             if "msg" in event:
                 print(event["msg"])
@@ -239,7 +254,7 @@ def train_sft_on_items(
     max_train_steps: int,
     log_event,
     ei_step: int,
-    train_log_interval_opt_steps: int = 10,
+    train_log_interval_opt_steps: int = 1,
 ) -> Dict[str, Any]:
     """
     Runs SFT training on prompt/response items for some epochs.
@@ -395,27 +410,30 @@ def main():
 
     # EI hyperparams
     ap.add_argument("--n_ei_steps", type=int, default=5)
-    ap.add_argument("--D_i", type=int, default=512, help="number of questions sampled per EI step")
-    ap.add_argument("--G", type=int, default=2, help="rollouts per question")
-    ap.add_argument("--epochs", type=int, default=1, help="SFT epochs per EI step")
+    ap.add_argument("--D_i", type=int, default=96, help="number of questions sampled per EI step (recommended range: 64-128)")
+    ap.add_argument("--G", type=int, default=3, help="rollouts per question (recommended range: 2-4)")
+    ap.add_argument("--epochs", type=int, default=2, help="SFT epochs per EI step")
     ap.add_argument("--max_train_steps_per_ei", type=int, default=0, help="0 means no cap")
 
     # SFT optimizer params
     ap.add_argument("--lr", type=float, default=2e-5)
-    ap.add_argument("--micro_batch_size", type=int, default=2)
-    ap.add_argument("--grad_acc_steps", type=int, default=16)
+    ap.add_argument("--micro_batch_size", type=int, default=1)
+    ap.add_argument("--grad_acc_steps", type=int, default=1)
 
     # vLLM sampling params for rollout
     ap.add_argument("--sampling_temperature", type=float, default=1.0)
     ap.add_argument("--sampling_top_p", type=float, default=1.0)
-    ap.add_argument("--sampling_max_tokens", type=int, default=256)
+    ap.add_argument("--sampling_max_tokens", type=int, default=512)
     ap.add_argument("--sampling_min_tokens", type=int, default=4)
 
     # eval params
-    ap.add_argument("--eval_max_examples", type=int, default=500)
+    ap.add_argument("--eval_max_examples", type=int, default=1500)
     ap.add_argument("--eval_request_batch_size", type=int, default=64)
     ap.add_argument("--rollout_request_batch_size", type=int, default=32)
     ap.add_argument("--save_each_ei_step", action="store_true")
+    ap.add_argument("--wandb_project", default="assignment2-alignment")
+    ap.add_argument("--wandb_run_name", default=None)
+    ap.add_argument("--wandb_mode", choices=("online", "offline", "disabled"), default="online")
 
     args = ap.parse_args()
 
@@ -424,7 +442,15 @@ def main():
     run_dir = Path(args.out_dir) / run_name
     run_dir.mkdir(parents=True, exist_ok=True)
     log_path = run_dir / "log.jsonl"
-    log_event = make_logger(log_path)
+    wandb_run = None
+    if args.wandb_mode != "disabled":
+        wandb_run = wandb.init(
+            project=args.wandb_project,
+            name=args.wandb_run_name or run_name,
+            config=vars(args),
+            mode=args.wandb_mode,
+        )
+    log_event = make_logger(log_path, wandb_run=wandb_run)
 
     # seeds
     torch.manual_seed(args.seed)
@@ -457,6 +483,8 @@ def main():
         torch_dtype=torch.bfloat16,
         attn_implementation="flash_attention_2",
     ).to(args.train_device)
+    policy.gradient_checkpointing_enable()
+    policy.config.use_cache = False
     policy.train()
 
     # init vLLM on vllm_device
@@ -551,7 +579,7 @@ def main():
             max_train_steps=args.max_train_steps_per_ei,
             log_event=log_event,
             ei_step=ei_step,
-            train_log_interval_opt_steps=10,            
+            train_log_interval_opt_steps=1,
         )
         log_event({"type": "train_summary", "ei_step": ei_step, "summary": train_summary,
                    "msg": f"[EI {ei_step}] train summary: {train_summary}"})
@@ -586,7 +614,9 @@ def main():
     policy.save_pretrained(str(final_dir))
     tokenizer.save_pretrained(str(final_dir))
     log_event({"type": "save", "ei_step": args.n_ei_steps, "out_dir": str(final_dir),
-               "msg": f"Saved final model: {final_dir}"})    
+               "msg": f"Saved final model: {final_dir}"})
+    if wandb_run is not None:
+        wandb_run.finish()
 
 
 if __name__ == "__main__":

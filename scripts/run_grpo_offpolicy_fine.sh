@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROLLOUT_BS=256
+ROLLOUT_BS=64
 
 MODEL_ID="${MODEL_ID:-data/models/Qwen2.5-Math-1.5B}"
 TRAIN_PATH="${TRAIN_PATH:-data/MATH/train.jsonl}"
@@ -16,19 +16,19 @@ LOSS_TYPE="grpo_clip"
 CLIPRANGE="${CLIPRANGE:-0.2}"
 
 # Fine sweep settings (200 steps as suggested)
-N_GRPO_STEPS="${N_GRPO_STEPS:-200}"
+N_GRPO_STEPS="${N_GRPO_STEPS:-40}"
 EVAL_INTERVAL="${EVAL_INTERVAL:-10}"
-EVAL_MAX_EXAMPLES="${EVAL_MAX_EXAMPLES:-1024}"
+EVAL_MAX_EXAMPLES="${EVAL_MAX_EXAMPLES:-1500}"
 
 SAMPLING_TEMP="${SAMPLING_TEMP:-1.0}"
 SAMPLING_MIN_TOKENS="${SAMPLING_MIN_TOKENS:-4}"
-SAMPLING_MAX_TOKENS="${SAMPLING_MAX_TOKENS:-1024}"
+SAMPLING_MAX_TOKENS="${SAMPLING_MAX_TOKENS:-512}"
 
-MICRO_BS="${MICRO_BS:-2}"
+MICRO_BS="${MICRO_BS:-1}"
 
 USE_STD_NORM="${USE_STD_NORM:-1}"
 LENGTH_NORM="${LENGTH_NORM:-masked_mean}"
-CONSTANT_NORMALIZER="${CONSTANT_NORMALIZER:-1024}"
+CONSTANT_NORMALIZER="${CONSTANT_NORMALIZER:-512}"
 
 LOG_DIR="${LOG_DIR:-runs/grpo_offpolicy_fine}"
 mkdir -p "${LOG_DIR}"
@@ -38,9 +38,9 @@ mkdir -p "${LOG_DIR}"
 # Format: "epochs train_bs"
 # ---------------------------
 CANDIDATES=(
-  "2 128"   # 4 updates/rollout
-  "2 64"    # 8 updates/rollout
-  "4 64"    # 16 updates/rollout (more aggressive)
+  "2 64"   # 2 updates/rollout
+  "2 32"   # 4 updates/rollout
+  "4 16"   # 16 updates/rollout
 )
 
 echo "=== Off-policy GRPO FINE sweep ==="
@@ -85,6 +85,7 @@ for cfg in "${CANDIDATES[@]}"; do
     --n-grpo-steps "${N_GRPO_STEPS}"
 
     --rollout-batch-size "${ROLLOUT_BS}"
+    --group-size 4
     --epochs-per-rollout-batch "${E}"
     --train-batch-size "${TB}"
     --gradient-accumulation-steps "${GA}"

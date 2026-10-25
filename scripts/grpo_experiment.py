@@ -7,6 +7,7 @@ from typing import Any
 from enum import Enum
 
 import torch
+import wandb
 import typer
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
@@ -138,17 +139,17 @@ def main(
     seed: int = 0,
 
     # ===== GRPO hypers =====
-    n_grpo_steps: int = 200,
+    n_grpo_steps: int = 40,
     learning_rate: float = 1e-5,
     advantage_eps: float = 1e-6,
-    rollout_batch_size: int = 256,
-    group_size: int = 8,
+    rollout_batch_size: int = 64,
+    group_size: int = 4,
     sampling_temperature: float = 1.0,
     sampling_min_tokens: int = 4,
-    sampling_max_tokens: int = 1024,
+    sampling_max_tokens: int = 512,
     epochs_per_rollout_batch: int = 1,
-    train_batch_size: int = 256,
-    gradient_accumulation_steps: int = 128,
+    train_batch_size: int = 64,
+    gradient_accumulation_steps: int = 64,
     gpu_memory_utilization: float = 0.85,
     loss_type: LossType = LossType.reinforce_with_baseline,
     use_std_normalization: bool = True,
@@ -156,10 +157,13 @@ def main(
 
     # ===== logging / eval =====
     eval_interval: int = 10,
-    eval_max_examples: int = 1024,
+    eval_max_examples: int = 1500,
     log_dir: str = "runs/grpo",
     save_interval: int = 50,
     stop_at: str = "</answer>",
+    wandb_project: str = "assignment2-alignment",
+    wandb_run_name: str | None = None,
+    wandb_mode: str = "online",
 ):
     torch.manual_seed(seed)
     random.seed(seed)
@@ -182,6 +186,29 @@ def main(
 
     os.makedirs(log_dir, exist_ok=True)
     log_path = Path(log_dir) / "train_log.jsonl"
+    wandb_run = None
+    if wandb_mode != "disabled":
+        wandb_run = wandb.init(
+            project=wandb_project,
+            name=wandb_run_name,
+            config={
+                "model_id": model_id,
+                "train_path": train_path,
+                "val_path": val_path,
+                "n_grpo_steps": n_grpo_steps,
+                "learning_rate": learning_rate,
+                "rollout_batch_size": rollout_batch_size,
+                "questions_per_update": n_prompts_per_rollout_batch,
+                "group_size": group_size,
+                "microbatch_size": micro_train_batch_size,
+                "gradient_accumulation_steps": gradient_accumulation_steps,
+                "sampling_max_tokens": sampling_max_tokens,
+                "eval_max_examples": eval_max_examples,
+                "loss_type": loss_type.value,
+                "seed": seed,
+            },
+            mode=wandb_mode,
+        )
 
     # -------- load data --------
     train_examples = load_math_jsonl(train_path, limit=0, seed=seed)
@@ -192,6 +219,8 @@ def main(
     # -------- init models --------
     tokenizer = AutoTokenizer.from_pretrained(model_id)
     policy = AutoModelForCausalLM.from_pretrained(model_id, torch_dtype=torch.bfloat16).cuda()
+    policy.gradient_checkpointing_enable()
+    policy.config.use_cache = False
     policy.train()
 
     optimizer = torch.optim.AdamW(policy.parameters(), lr=learning_rate, weight_decay=0.0, betas=(0.9, 0.95))
@@ -365,6 +394,9 @@ def main(
 
                 with open(log_path, "a", encoding="utf-8") as f:
                     f.write(json.dumps(log_obj) + "\n")                
+                if wandb_run is not None:
+                    wandb.log({f"train/{key}": value for key, value in log_obj.items()
+                               if isinstance(value, (int, float))}, step=global_step)
 
                 # ===== periodic eval =====
                 if global_step % eval_interval == 0:
@@ -383,6 +415,8 @@ def main(
                     )
                     with open(log_path, "a", encoding="utf-8") as f:
                         f.write(json.dumps({"global_step": global_step, **val_metrics}) + "\n")
+                    if wandb_run is not None:
+                        wandb.log({f"eval/{key}": value for key, value in val_metrics.items()}, step=global_step)
 
                 # ===== periodic save =====
                 if global_step % save_interval == 0:
@@ -393,6 +427,9 @@ def main(
 
         # before next rollout: synchronize latest policy weights into vLLM
         load_policy_into_vllm_instance(policy, llm)
+
+    if wandb_run is not None:
+        wandb_run.finish()
 
 
 if __name__ == "__main__":

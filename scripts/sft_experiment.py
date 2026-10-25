@@ -8,6 +8,7 @@ from pathlib import Path
 from datetime import datetime
 
 import torch
+import wandb
 from torch.utils.data import Dataset, DataLoader
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
@@ -126,7 +127,7 @@ def filter_correct_sft_samples(data_path: str, out_path: str):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--model_id", default="data/models/Qwen2.5-Math-1.5B")
-    ap.add_argument("--sft_path", default="data/MATH/sft.jsonl")
+    ap.add_argument("--sft_path", default="data/sft.jsonl")
     ap.add_argument("--val_path", default="data/MATH/validation.jsonl")
     ap.add_argument("--prompt_file", default="cs336_alignment/prompts/r1_zero.prompt")
 
@@ -137,19 +138,31 @@ def main():
     ap.add_argument("--filter_correct", action="store_true")
 
     ap.add_argument("--lr", type=float, default=2e-5)
-    ap.add_argument("--micro_batch_size", type=int, default=2)
-    ap.add_argument("--grad_acc_steps", type=int, default=16)
-    ap.add_argument("--max_steps", type=int, default=2000)
-    ap.add_argument("--eval_interval", type=int, default=200)
+    ap.add_argument("--micro_batch_size", type=int, default=1)
+    ap.add_argument("--grad_acc_steps", type=int, default=1)
+    ap.add_argument("--epochs", type=int, default=2)
+    ap.add_argument("--max_steps", type=int, default=0, help="0 means train for all requested epochs")
+    ap.add_argument("--eval_interval", type=int, default=118)
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--out_dir", default="runs/sft_experiment")
-    ap.add_argument("--eval_max_examples", type=int, default=500)
+    ap.add_argument("--eval_max_examples", type=int, default=1500)
+    ap.add_argument("--wandb_project", default="assignment2-alignment")
+    ap.add_argument("--wandb_run_name", default=None)
+    ap.add_argument("--wandb_mode", choices=("online", "offline", "disabled"), default="online")
     args = ap.parse_args()
 
     # logging
     run_dir = Path(args.out_dir) / f"samples{args.train_samples or 'full'}_{'filtered' if args.filter_correct else 'all'}"
     run_dir.mkdir(parents=True, exist_ok=True)
     log_path = run_dir / "log.jsonl"
+    wandb_run = None
+    if args.wandb_mode != "disabled":
+        wandb_run = wandb.init(
+            project=args.wandb_project,
+            name=args.wandb_run_name or f"sft_samples{args.train_samples or 'full'}",
+            config=vars(args),
+            mode=args.wandb_mode,
+        )
 
     opt_step = 0  # counts optimizer updates
     step = 0
@@ -189,6 +202,8 @@ def main():
         torch_dtype=torch.bfloat16,
         attn_implementation="flash_attention_2",
     ).to(args.train_device)
+    policy.gradient_checkpointing_enable()
+    policy.config.use_cache = False
     policy.train()
 
     # vLLM on eval device
@@ -201,7 +216,7 @@ def main():
     eval_sampling_params = SamplingParams(
         temperature=1.0,
         top_p=1.0,
-        max_tokens=1024,
+        max_tokens=512,
         stop=["</answer>"],
         include_stop_str_in_output=True,
     )
@@ -220,7 +235,7 @@ def main():
         batch_size=args.micro_batch_size,
         shuffle=True,
         collate_fn=lambda b: collate_fn(b, tokenizer),
-        drop_last=True,
+        drop_last=False,
     )
 
     opt = torch.optim.AdamW(policy.parameters(), lr=args.lr)
@@ -228,7 +243,7 @@ def main():
     # training loop
     opt.zero_grad(set_to_none=True)
 
-    for epoch in range(10_000_000):
+    for epoch in range(args.epochs):
         for batch in loader:
             step += 1
             micro_idx += 1
@@ -255,11 +270,13 @@ def main():
                 opt.step()
                 opt.zero_grad(set_to_none=True)
                 opt_step += 1
-                if opt_step % 10 == 0:
-                    log_event({"type": "train_loss", "loss": float(loss.detach())}, also_print=False)
+                train_loss = float(loss.detach())
+                log_event({"type": "train_loss", "loss": train_loss}, also_print=False)
+                if wandb_run is not None:
+                    wandb.log({"train/loss": train_loss, "train/epoch": epoch + 1})
 
             # periodic eval
-            if step % args.eval_interval == 0:
+            if step % args.eval_interval == 0 or (step % len(loader) == 0):
                 policy.eval()
                 with torch.no_grad():
                     load_policy_into_vllm_instance(policy, llm)
@@ -300,17 +317,21 @@ def main():
                 }
                 log_event({"type": "eval_metrics", "loss": float(loss.detach()), "metrics": metrics,
                         "msg": f"[step={step}] loss={float(loss.detach()):.4f} {metrics}"})
+                if wandb_run is not None:
+                    wandb.log({"train/loss_at_eval": float(loss.detach()), **metrics})
                 policy.train()
 
-            if step >= args.max_steps:
+            if args.max_steps > 0 and step >= args.max_steps:
                 break
-        if step >= args.max_steps:
+        if args.max_steps > 0 and step >= args.max_steps:
             break
 
     # save
     policy.save_pretrained(str(run_dir))
     tokenizer.save_pretrained(str(run_dir))
     log_event({"type": "save", "out_dir": str(run_dir), "msg": f"Saved: {run_dir}"})
+    if wandb_run is not None:
+        wandb_run.finish()
 
 
 if __name__ == "__main__":
