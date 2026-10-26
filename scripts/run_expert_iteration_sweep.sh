@@ -16,8 +16,6 @@ SAMPLING_MAX_TOKENS=512
 SAMPLING_MIN_TOKENS=4
 SEED=0
 
-TRAIN_DEVICE="cuda:0"
-VLLM_DEVICE="cuda:1"
 
 # ==========================
 # Sweep list
@@ -56,8 +54,6 @@ for item in "${RUNS[@]}"; do
     echo "  --sampling_max_tokens ${SAMPLING_MAX_TOKENS} \\"
     echo "  --sampling_min_tokens ${SAMPLING_MIN_TOKENS} \\"
     echo "  --seed ${SEED} \\"
-    echo "  --train_device ${TRAIN_DEVICE} \\"
-    echo "  --vllm_device ${VLLM_DEVICE} \\"
     echo
 
     uv run python scripts/expert_iteration_experiment.py \
@@ -68,10 +64,7 @@ for item in "${RUNS[@]}"; do
       --sampling_min_tokens "${SAMPLING_MIN_TOKENS}" \
       --micro_batch_size 1 \
       --grad_acc_steps 1 \
-      --seed "${SEED}" \
-      --train_device "${TRAIN_DEVICE}" \
-      --vllm_device "${VLLM_DEVICE}" \
-
+      --seed "${SEED}"
     exit_code=$?
     echo
     echo "EXIT_CODE: ${exit_code}"

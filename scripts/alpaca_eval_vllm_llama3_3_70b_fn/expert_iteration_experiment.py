@@ -16,8 +16,8 @@ from unittest.mock import patch
 from vllm import LLM, SamplingParams
 from vllm.model_executor import set_random_seed as vllm_set_random_seed
 
-from cs336_alignment.drgrpo_grader import r1_zero_reward_fn
-from cs336_alignment.sft_utils import tokenize_prompt_and_output, get_response_log_probs, sft_microbatch_train_step
+from alignment.drgrpo_grader import r1_zero_reward_fn
+from alignment.sft_utils import tokenize_prompt_and_output, get_response_log_probs, sft_microbatch_train_step
 
 from math_baseline import evaluate_vllm
 
@@ -397,10 +397,10 @@ def save_jsonl(items: List[Dict[str, Any]], path: Path):
 def main():
     ap = argparse.ArgumentParser()
 
-    ap.add_argument("--model_id", default="data/models/Qwen2.5-Math-1.5B")
+    ap.add_argument("--model_id", default="/home/mzt5720/models/Qwen2.5-Math-1.5B")
     ap.add_argument("--train_path", default="data/MATH/train.jsonl")
     ap.add_argument("--val_path", default="data/MATH/validation.jsonl")
-    ap.add_argument("--prompt_file", default="cs336_alignment/prompts/r1_zero.prompt")
+    ap.add_argument("--prompt_file", default="alignment/prompts/r1_zero.prompt")
 
     ap.add_argument("--train_device", default="cuda:0")
     ap.add_argument("--vllm_device", default="cuda:1")

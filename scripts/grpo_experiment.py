@@ -15,9 +15,9 @@ from unittest.mock import patch
 from vllm import LLM, SamplingParams
 from vllm.model_executor import set_random_seed as vllm_set_random_seed
 
-from cs336_alignment.sft_utils import tokenize_prompt_and_output, get_response_log_probs
-from cs336_alignment.drgrpo_grader import r1_zero_reward_fn, question_only_reward_fn
-from cs336_alignment.grpo import compute_group_normalized_rewards, grpo_microbatch_train_step, masked_mean
+from alignment.sft_utils import tokenize_prompt_and_output, get_response_log_probs
+from alignment.drgrpo_grader import r1_zero_reward_fn, question_only_reward_fn
+from alignment.grpo import compute_group_normalized_rewards, grpo_microbatch_train_step, masked_mean
 
 
 app = typer.Typer()
@@ -112,6 +112,7 @@ def eval_rewards_with_vllm(
         min_tokens=min_tokens,
         max_tokens=max_tokens,
         stop=stop,
+        include_stop_str_in_output=True,
     )
     outs = llm.generate(prompts, sp)
     # outs[i].outputs[0].text
@@ -132,10 +133,10 @@ def eval_rewards_with_vllm(
 
 @app.command()
 def main(
-    model_id: str = "data/models/Qwen2.5-Math-1.5B",
+    model_id: str = "/home/mzt5720/models/Qwen2.5-Math-1.5B",
     train_path: str = "data/MATH/train.jsonl",
     val_path: str = "data/MATH/validation.jsonl",
-    prompt_file: str = "cs336_alignment/prompts/r1_zero.prompt",
+    prompt_file: str = "alignment/prompts/r1_zero.prompt",
     seed: int = 0,
 
     # ===== GRPO hypers =====
@@ -225,7 +226,13 @@ def main(
 
     optimizer = torch.optim.AdamW(policy.parameters(), lr=learning_rate, weight_decay=0.0, betas=(0.9, 0.95))
 
-    llm = init_vllm(model_id=model_id, device="cuda:1", seed=seed, gpu_memory_utilization=gpu_memory_utilization)
+    shared_gpu = torch.cuda.device_count() < 2
+    llm = init_vllm(
+        model_id=model_id,
+        device="cuda:0" if shared_gpu else "cuda:1",
+        seed=seed,
+        gpu_memory_utilization=min(gpu_memory_utilization, 0.35) if shared_gpu else gpu_memory_utilization,
+    )
 
     load_policy_into_vllm_instance(policy, llm)
 
@@ -248,6 +255,7 @@ def main(
             max_tokens=sampling_max_tokens,
             n=group_size,
             stop=[stop_at],
+            include_stop_str_in_output=True,
         )
         outs = llm.generate(batch_prompts, sp)
 

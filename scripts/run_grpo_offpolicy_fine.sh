@@ -3,10 +3,10 @@ set -euo pipefail
 
 ROLLOUT_BS=64
 
-MODEL_ID="${MODEL_ID:-data/models/Qwen2.5-Math-1.5B}"
+MODEL_ID="${MODEL_ID:-/home/mzt5720/models/Qwen2.5-Math-1.5B}"
 TRAIN_PATH="${TRAIN_PATH:-data/MATH/train.jsonl}"
 VAL_PATH="${VAL_PATH:-data/MATH/validation.jsonl}"
-PROMPT_FILE="${PROMPT_FILE:-cs336_alignment/prompts/r1_zero.prompt}"
+PROMPT_FILE="${PROMPT_FILE:-alignment/prompts/r1_zero.prompt}"
 
 LEARNING_RATE="${LEARNING_RATE:-1e-5}"   # best lr from earlier sweep
 SEED="${SEED:-0}"

@@ -3,6 +3,7 @@ set -euo pipefail
 
 LOG_DIR="logs/sft_experiment"
 mkdir -p "${LOG_DIR}"
+MODEL_ID="${MODEL_ID:-/home/mzt5720/models/Qwen2.5-Math-1.5B}"
 
 EVAL_INTERVAL=32
 EVAL_MAX_EXAMPLES=1500
@@ -26,16 +27,16 @@ for item in "${RUNS[@]}"; do
   log_file="${LOG_DIR}/${ts}_${name}.log"
 
   echo "=== Run: ${name} @ $(date) ==="
-  echo "Command: uv run python scripts/sft_experiment.py ${args}"
+  echo "Command: uv run python scripts/sft_experiment.py ${args} --model_id ${MODEL_ID}"
   echo "Log: ${log_file}"
   echo
 
   set +e
   {
     echo "===== BEGIN ${name} $(date) ====="
-    echo "CMD: uv run python scripts/sft_experiment.py ${args}"
+    echo "CMD: uv run python scripts/sft_experiment.py ${args} --model_id ${MODEL_ID}"
     echo
-    uv run python scripts/sft_experiment.py ${args}
+    uv run python scripts/sft_experiment.py ${args} --model_id "${MODEL_ID}"
     exit_code=$?
     echo
     echo "EXIT_CODE: ${exit_code}"

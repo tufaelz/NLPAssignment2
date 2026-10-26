@@ -14,9 +14,9 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from math_baseline import evaluate_vllm
 
-from cs336_alignment.sft_utils import tokenize_prompt_and_output, get_response_log_probs, sft_microbatch_train_step, log_generations
+from alignment.sft_utils import tokenize_prompt_and_output, get_response_log_probs, sft_microbatch_train_step, log_generations
 
-from cs336_alignment.drgrpo_grader import r1_zero_reward_fn
+from alignment.drgrpo_grader import r1_zero_reward_fn
 
 from unittest.mock import patch
 from vllm import LLM, SamplingParams
@@ -126,13 +126,13 @@ def filter_correct_sft_samples(data_path: str, out_path: str):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--model_id", default="data/models/Qwen2.5-Math-1.5B")
+    ap.add_argument("--model_id", default="/home/mzt5720/models/Qwen2.5-Math-1.5B")
     ap.add_argument("--sft_path", default="data/sft.jsonl")
     ap.add_argument("--val_path", default="data/MATH/validation.jsonl")
-    ap.add_argument("--prompt_file", default="cs336_alignment/prompts/r1_zero.prompt")
+    ap.add_argument("--prompt_file", default="alignment/prompts/r1_zero.prompt")
 
     ap.add_argument("--train_device", default="cuda:0")
-    ap.add_argument("--vllm_device", default="cuda:1")
+    ap.add_argument("--vllm_device", default=f"cuda:{1 if torch.cuda.device_count() > 1 else 0}")
 
     ap.add_argument("--train_samples", type=int, default=0, help="0 means full dataset")
     ap.add_argument("--filter_correct", action="store_true")
@@ -207,7 +207,13 @@ def main():
     policy.train()
 
     # vLLM on eval device
-    llm = init_vllm(args.model_id, device=args.vllm_device, seed=args.seed)
+    shared_gpu = args.train_device == args.vllm_device
+    llm = init_vllm(
+        args.model_id,
+        device=args.vllm_device,
+        seed=args.seed,
+        gpu_memory_utilization=0.35 if shared_gpu else 0.85,
+    )
 
     eval_prompts, eval_gts = build_math_val_prompts_and_gts(
         args.val_path, args.prompt_file, max_examples=args.eval_max_examples
